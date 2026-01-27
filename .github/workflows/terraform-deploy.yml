@@ -1,0 +1,70 @@
+# .github/workflows/terraform-deploy-simple.yml
+# GitHub Actions workflow to deploy infrastructure to GCP using Terraform
+
+name: Deploy Infrastructure to GCP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      # Authenticate using Service Account Key
+      - name: Setup Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      # Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      # Create terraform.tfvars
+      - name: Create terraform.tfvars
+        working-directory: ./infrastructure
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id  = "${{ secrets.GCP_PROJECT_ID }}"
+          region      = "us-central1"
+          zone        = "us-central1-a"
+          github_repo = "https://github.com/${{ github.repository }}.git"
+          EOF
+      
+      # Terraform Init
+      - name: Terraform Init
+        working-directory: ./infrastructure
+        run: terraform init
+      
+      # Terraform Plan
+      - name: Terraform Plan
+        working-directory: ./infrastructure
+        run: terraform plan -out=tfplan
+      
+      # Terraform Apply (only on push to main)
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ./infrastructure
+        run: terraform apply -auto-approve tfplan
+      
+      # Show outputs
+      - name: Show Outputs
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ./infrastructure
+        run: |
+          echo "✅ Deployment Complete!"
+          echo "🌐 Load Balancer IP: $(terraform output -raw load_balancer_ip)"
+          echo "📱 Appl
+      - name: Terraform Apply
+        working-directory: ./infrastructure
+        run: terraform apply -auto-approve tfplan
+      
+      # Show outputs
+      - name: Show Outputs

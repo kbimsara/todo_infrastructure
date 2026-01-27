@@ -1,0 +1,70 @@
+# .github/workflows/terraform-destroy.yml
+# Manual workflow to destroy GCP infrastructure
+
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "destroy" to confirm deletion of all infrastructure'
+        required: true
+        type: string
+
+jobs:
+  destroy:
+    name: 'Terraform Destroy'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "destroy" ]; then
+            echo "❌ Confirmation failed. You must type 'destroy' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated. Proceeding with destroy..."
+      
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      # Authenticate using Service Account Key
+      - name: Setup Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      # Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      # Create terraform.tfvars
+      - name: Create terraform.tfvars
+        working-directory: ./infrastructure
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id  = "${{ secrets.GCP_PROJECT_ID }}"
+          region      = "us-central1"
+          zone        = "us-central1-a"
+          github_repo = "https://github.com/${{ github.repository }}.git"
+          EOF
+      
+      # Terraform Init
+      - name: Terraform Init
+        working-directory: ./infrastructure
+        run: terraform init
+      
+      # Terraform Destroy
+      - name: Terraform Destroy
+        working-directory: ./infrastructure
+        run: |
+          echo "🗑️  Destroying infrastructure..."
+          terraform destroy -auto-approve
+      
+      # Confirmation
+      - name: Destroy Complete
+        run: |
+          echo "✅ Infrastructure destroyed successfully!"
+          echo "All GCP resources have been removed."

@@ -1,17 +1,30 @@
-# .github/workflows/terraform-deploy-simple.yml
-# GitHub Actions workflow to deploy infrastructure to GCP using Terraform
+# .github/workflows/terraform-destroy.yml
+# Manual workflow to destroy GCP infrastructure
 
-name: Deploy Infrastructure to GCP
+name: Destroy Infrastructure
 
 on:
   workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "destroy" to confirm deletion of all infrastructure'
+        required: true
+        type: string
 
 jobs:
-  terraform:
-    name: 'Terraform'
+  destroy:
+    name: 'Terraform Destroy'
     runs-on: ubuntu-latest
     
     steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "destroy" ]; then
+            echo "❌ Confirmation failed. You must type 'destroy' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated. Proceeding with destroy..."
+      
       - name: Checkout
         uses: actions/checkout@v4
       
@@ -43,28 +56,15 @@ jobs:
         working-directory: ./infrastructure
         run: terraform init
       
-      # Terraform Plan
-      - name: Terraform Plan
-        working-directory: ./infrastructure
-        run: terraform plan -out=tfplan
-      
-      # Terraform Apply (only on push to main)
-      - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        working-directory: ./infrastructure
-        run: terraform apply -auto-approve tfplan
-      
-      # Show outputs
-      - name: Show Outputs
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      # Terraform Destroy
+      - name: Terraform Destroy
         working-directory: ./infrastructure
         run: |
-          echo "✅ Deployment Complete!"
-          echo "🌐 Load Balancer IP: $(terraform output -raw load_balancer_ip)"
-          echo "📱 Appl
-      - name: Terraform Apply
-        working-directory: ./infrastructure
-        run: terraform apply -auto-approve tfplan
+          echo "🗑️  Destroying infrastructure..."
+          terraform destroy -auto-approve
       
-      # Show outputs
-      - name: Show Outputs
+      # Confirmation
+      - name: Destroy Complete
+        run: |
+          echo "✅ Infrastructure destroyed successfully!"
+          echo "All GCP resources have been removed."

@@ -1,33 +1,46 @@
-# .github/workflows/terraform-deploy.yml
-# GitHub Actions workflow to deploy infrastructure to GCP using Terraform
+# .github/workflows/terraform-deploy-fixed.yml
+# Fixed GitHub Actions workflow that handles existing resources
 
-name: Deploy Infrastructure to GCP
+name: Deploy Infrastructure to GCP (Fixed)
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+          - clean-apply
+
+env:
+  TF_VERSION: '1.6.0'
 
 jobs:
   terraform:
-    name: 'Terraform'
+    name: 'Terraform Deploy'
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       
-      # Authenticate using Service Account Key
       - name: Setup Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       
-      # Setup Terraform
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: ${{ env.TF_VERSION }}
       
-      # Create terraform.tfvars
       - name: Create terraform.tfvars
         working-directory: ./infrastructure
         run: |
@@ -38,26 +51,112 @@ jobs:
           github_repo = "https://github.com/${{ github.repository }}.git"
           EOF
       
-      # Terraform Init
       - name: Terraform Init
         working-directory: ./infrastructure
         run: terraform init
       
-      # Terraform Plan
-      - name: Terraform Plan
-        working-directory: ./infrastructure
-        run: terraform plan -out=tfplan
-      
-      # Terraform Apply
-      - name: Terraform Apply
-        working-directory: ./infrastructure
-        run: terraform apply -auto-approve tfplan
-      
-      # Show outputs
-      - name: Show Outputs
+      # Clean up if 'clean-apply' is selected
+      - name: Clean Up Existing Resources
+        if: github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
         run: |
-          echo "✅ Deployment Complete!"
-          echo "🌐 Load Balancer IP: $(terraform output -raw load_balancer_ip)"
-          echo "📱 Application URL: $(terraform output -raw application_url)"
-          echo "🖥️  Direct VM URL: $(terraform output -raw direct_vm_url)"
+          echo "🧹 Cleaning up existing resources..."
+          
+          # Try to destroy via Terraform first
+          terraform destroy -auto-approve || true
+          
+          # Manually delete any remaining resources
+          gcloud compute firewall-rules delete allow-http --quiet 2>/dev/null || true
+          gcloud compute firewall-rules delete allow-https --quiet 2>/dev/null || true
+          gcloud compute firewall-rules delete allow-health-check --quiet 2>/dev/null || true
+          gcloud compute firewall-rules delete allow-ssh-todo --quiet 2>/dev/null || true
+          gcloud compute forwarding-rules delete todo-app-http-forwarding-rule --global --quiet 2>/dev/null || true
+          gcloud compute target-http-proxies delete todo-app-http-proxy --quiet 2>/dev/null || true
+          gcloud compute url-maps delete todo-app-load-balancer --quiet 2>/dev/null || true
+          gcloud compute backend-services delete todo-app-backend --global --quiet 2>/dev/null || true
+          gcloud compute instance-groups unmanaged delete todo-app-instance-group --zone=us-central1-a --quiet 2>/dev/null || true
+          gcloud compute health-checks delete todo-app-health-check --quiet 2>/dev/null || true
+          gcloud compute instances delete todo-app-vm --zone=us-central1-a --quiet 2>/dev/null || true
+          gcloud compute addresses delete todo-app-static-ip --global --quiet 2>/dev/null || true
+          
+          echo "✅ Cleanup complete"
+      
+      # Try to import existing resources if they exist
+      - name: Import Existing Resources
+        if: github.event.inputs.action == 'apply'
+        working-directory: ./infrastructure
+        run: |
+          echo "📥 Attempting to import existing resources..."
+          terraform import google_compute_firewall.allow_http allow-http 2>/dev/null || echo "  • allow-http doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_https allow-https 2>/dev/null || echo "  • allow-https doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_health_check allow-health-check 2>/dev/null || echo "  • allow-health-check doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_ssh allow-ssh-todo 2>/dev/null || echo "  • allow-ssh-todo doesn't exist or already in state"
+          terraform import google_compute_global_address.nextjs_ip todo-app-static-ip 2>/dev/null || echo "  • todo-app-static-ip doesn't exist or already in state"
+          terraform import google_compute_health_check.nextjs_health_check todo-app-health-check 2>/dev/null || echo "  • health check doesn't exist or already in state"
+          terraform import google_compute_instance.nextjs_vm us-central1-a/todo-app-vm 2>/dev/null || echo "  • VM doesn't exist or already in state"
+          echo "✅ Import attempt complete"
+        continue-on-error: true
+      
+      - name: Terraform Plan
+        working-directory: ./infrastructure
+        run: |
+          terraform plan -out=tfplan
+      
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
+        working-directory: ./infrastructure
+        run: |
+          terraform apply -auto-approve tfplan
+      
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: ./infrastructure
+        run: |
+          terraform destroy -auto-approve
+      
+      - name: Get Outputs
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
+        id: outputs
+        working-directory: ./infrastructure
+        run: |
+          echo "vm_ip=$(terraform output -raw vm_external_ip 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
+          echo "lb_ip=$(terraform output -raw load_balancer_ip 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
+          echo "app_url=$(terraform output -raw application_url 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
+          echo "direct_url=$(terraform output -raw direct_vm_url 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
+      
+      - name: Display Results
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
+        run: |
+          echo "## 🎉 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Infrastructure Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **VM IP:** ${{ steps.outputs.outputs.vm_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Load Balancer IP:** ${{ steps.outputs.outputs.lb_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Direct Access:** ${{ steps.outputs.outputs.direct_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Load Balancer URL:** ${{ steps.outputs.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⏱️ Important Notes" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ VM should be accessible immediately" >> $GITHUB_STEP_SUMMARY
+          echo "- ⏳ Load Balancer takes 5-10 minutes to be fully operational" >> $GITHUB_STEP_SUMMARY
+          echo "- 🧪 Test direct VM access first: ${{ steps.outputs.outputs.direct_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Debugging Commands" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# SSH to VM" >> $GITHUB_STEP_SUMMARY
+          echo "gcloud compute ssh todo-app-vm --zone=us-central1-a --project=${{ secrets.GCP_PROJECT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Check containers" >> $GITHUB_STEP_SUMMARY
+          echo "sudo docker ps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# View logs" >> $GITHUB_STEP_SUMMARY
+          echo "cd /home/ubuntu/app && sudo docker-compose logs -f" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Check Backend Health
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
+        working-directory: ./infrastructure
+        run: |
+          echo "Waiting 30 seconds before checking backend health..."
+          sleep 30
+          gcloud compute backend-services get-health todo-app-backend --global || echo "Backend not ready yet"
+        continue-on-error: true

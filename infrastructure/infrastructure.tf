@@ -1,5 +1,5 @@
 # infrastructure.tf
-# FIXED VERSION - Complete GCP Infrastructure
+# Complete GCP Infrastructure with Direct VM Access
 # VM + Load Balancer + Docker Containers (Next.js + MongoDB)
 
 variable "project_id" {
@@ -60,6 +60,10 @@ resource "google_project_service" "compute" {
   disable_on_destroy = false
 }
 
+# ============================================
+# FIREWALL RULES
+# ============================================
+
 resource "google_compute_firewall" "allow_http" {
   name    = "allow-http"
   network = "default"
@@ -119,6 +123,26 @@ resource "google_compute_firewall" "allow_ssh" {
   
   depends_on = [google_project_service.compute]
 }
+
+# NEW: Allow direct access to application port 3000
+resource "google_compute_firewall" "allow_app_port" {
+  name    = "allow-app-port-3000"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["3000"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["http-server"]
+  
+  depends_on = [google_project_service.compute]
+}
+
+# ============================================
+# COMPUTE ENGINE VM
+# ============================================
 
 resource "google_compute_instance" "nextjs_vm" {
   name         = var.vm_name
@@ -229,7 +253,7 @@ COMPOSE_EOF
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Todo App - Deployed!</title>
+    <title>Todo App - Running!</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -247,7 +271,7 @@ COMPOSE_EOF
             padding: 60px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             text-align: center;
-            max-width: 600px;
+            max-width: 700px;
         }
         h1 {
             font-size: 3rem;
@@ -264,6 +288,15 @@ COMPOSE_EOF
             margin: 20px 0;
             font-size: 1.2rem;
         }
+        .badge {
+            display: inline-block;
+            background: #4285f4;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            margin: 5px;
+        }
         .info {
             background: #f8f9fa;
             padding: 20px;
@@ -278,13 +311,33 @@ COMPOSE_EOF
         .info strong {
             color: #333;
         }
-        .next-steps {
-            margin-top: 30px;
-            text-align: left;
-            color: #666;
-            line-height: 1.8;
-        }
         .emoji { font-size: 4rem; margin: 20px 0; }
+        .access-box {
+            margin-top: 30px;
+            padding: 20px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            border-left: 4px solid #34a853;
+        }
+        .access-box h3 {
+            color: #2d9048;
+            margin-bottom: 15px;
+        }
+        .access-box ul {
+            list-style: none;
+            padding: 0;
+            text-align: left;
+        }
+        .access-box li {
+            padding: 8px 0;
+            color: #666;
+        }
+        .access-box li:before {
+            content: "✓ ";
+            color: #34a853;
+            font-weight: bold;
+            margin-right: 8px;
+        }
     </style>
 </head>
 <body>
@@ -293,16 +346,35 @@ COMPOSE_EOF
         <h1>Todo App Deployed!</h1>
         <div class="status">✓ Infrastructure Running</div>
         
-        <div class="info">
-            <p><strong>Status:</strong> All containers are running</p>
-            <p><strong>MongoDB:</strong> Connected and healthy</p>
-            <p><strong>Backend:</strong> Ready to accept connections</p>
-            <p><strong>Load Balancer:</strong> Configured (may take 5-10 minutes)</p>
+        <div style="margin: 20px 0;">
+            <span class="badge">Docker ✓</span>
+            <span class="badge">MongoDB ✓</span>
+            <span class="badge">Nginx ✓</span>
+            <span class="badge">Firewall ✓</span>
         </div>
         
-        <div class="next-steps">
-            <h3>Next Steps:</h3>
-            <ol>
+        <div class="access-box">
+            <h3>✅ Direct Access Enabled!</h3>
+            <ul>
+                <li>You can access this page directly via VM IP</li>
+                <li>Load Balancer access also available (wait 10 min)</li>
+                <li>SSH access enabled for debugging</li>
+                <li>Port 3000 open to the internet</li>
+            </ul>
+        </div>
+        
+        <div class="info">
+            <p><strong>Infrastructure Status:</strong></p>
+            <p>✓ VM Instance: Running</p>
+            <p>✓ MongoDB: Connected and healthy</p>
+            <p>✓ Web Server: Responding on port 3000</p>
+            <p>✓ Firewall: Direct access configured</p>
+            <p>⏳ Load Balancer: Provisioning (5-10 min)</p>
+        </div>
+        
+        <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px;">
+            <h3 style="color: #856404; margin-bottom: 10px;">🚀 Next Steps</h3>
+            <ol style="color: #856404; text-align: left; padding-left: 20px;">
                 <li>Build your Next.js Docker image</li>
                 <li>Push to GitHub Container Registry</li>
                 <li>Update docker-compose.yml with your image</li>
@@ -312,8 +384,10 @@ COMPOSE_EOF
     </div>
     
     <script>
-        // Test MongoDB connection endpoint
-        fetch('/api/health').catch(() => console.log('API not yet configured'));
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('✅ Todo App Infrastructure Deployed!');
+            console.log('📍 Current URL:', window.location.href);
+        });
     </script>
 </body>
 </html>
@@ -365,9 +439,14 @@ HEALTH_EOF
     google_compute_firewall.allow_http,
     google_compute_firewall.allow_https,
     google_compute_firewall.allow_health_check,
-    google_compute_firewall.allow_ssh
+    google_compute_firewall.allow_ssh,
+    google_compute_firewall.allow_app_port
   ]
 }
+
+# ============================================
+# HEALTH CHECK
+# ============================================
 
 resource "google_compute_health_check" "nextjs_health_check" {
   name               = "todo-app-health-check"
@@ -378,11 +457,15 @@ resource "google_compute_health_check" "nextjs_health_check" {
 
   http_health_check {
     port         = 3000
-    request_path = "/health"  # Using /health endpoint
+    request_path = "/health"
   }
   
   depends_on = [google_project_service.compute]
 }
+
+# ============================================
+# INSTANCE GROUP
+# ============================================
 
 resource "google_compute_instance_group" "nextjs_ig" {
   name = "todo-app-instance-group"
@@ -397,6 +480,10 @@ resource "google_compute_instance_group" "nextjs_ig" {
     port = 3000
   }
 }
+
+# ============================================
+# LOAD BALANCER
+# ============================================
 
 resource "google_compute_backend_service" "nextjs_backend" {
   name                  = "todo-app-backend"
@@ -436,6 +523,10 @@ resource "google_compute_global_forwarding_rule" "nextjs_http_rule" {
   ip_address            = google_compute_global_address.nextjs_ip.id
 }
 
+# ============================================
+# OUTPUTS
+# ============================================
+
 output "vm_name" {
   description = "Name of the VM instance"
   value       = google_compute_instance.nextjs_vm.name
@@ -452,31 +543,41 @@ output "load_balancer_ip" {
 }
 
 output "application_url" {
-  description = "URL to access your application (via Load Balancer)"
+  description = "URL to access via Load Balancer"
   value       = "http://${google_compute_global_address.nextjs_ip.address}"
 }
 
 output "direct_vm_url" {
-  description = "Direct VM access (bypass load balancer) - USE THIS FIRST"
+  description = "Direct VM access - WORKS IMMEDIATELY"
   value       = "http://${google_compute_instance.nextjs_vm.network_interface[0].access_config[0].nat_ip}:3000"
 }
 
 output "ssh_command" {
-  description = "Command to SSH into the VM"
+  description = "SSH into the VM"
   value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id}"
 }
 
 output "check_startup_logs" {
-  description = "Command to check startup script logs"
+  description = "Check startup script logs"
   value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='sudo cat /var/log/startup-script.log'"
 }
 
 output "check_containers" {
-  description = "Command to check container status"
+  description = "Check container status"
   value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cd /home/ubuntu/app && sudo docker-compose ps'"
 }
 
 output "check_backend_health" {
-  description = "Command to check load balancer backend health"
+  description = "Check load balancer backend health"
   value       = "gcloud compute backend-services get-health todo-app-backend --global"
+}
+
+output "access_summary" {
+  description = "Access methods summary"
+  value = {
+    direct_access     = "✅ http://${google_compute_instance.nextjs_vm.network_interface[0].access_config[0].nat_ip}:3000 (Immediate)"
+    load_balancer     = "⏳ http://${google_compute_global_address.nextjs_ip.address} (Wait 10 min)"
+    ssh               = "✅ Port 22 (Enabled)"
+    direct_port_3000  = "✅ Port 3000 (Open to Internet)"
+  }
 }

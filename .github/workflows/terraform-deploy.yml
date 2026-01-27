@@ -15,6 +15,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
+      # Debug: List directory structure
+      - name: List workspace
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Directory contents:"
+          ls -la
+          echo "Checking infrastructure directory:"
+          ls -la infrastructure/ || echo "Infrastructure directory not found"
+      
       # Authenticate using Service Account Key
       - name: Setup Google Cloud
         uses: google-github-actions/auth@v2

@@ -217,23 +217,26 @@ services:
       retries: 5
       start_period: 20s
 
-  # Nginx with custom HTML (for testing - replace with your Next.js app)
+  # Next.js Todo App
   app:
-    image: nginx:alpine
+    build:
+      context: ../Todo App
+      dockerfile: Dockerfile
     container_name: todo-app
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "3000:3000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/todoapp
+      - NODE_ENV=production
     networks:
       - todo-network
-    volumes:
-      - ./html:/usr/share/nginx/html:ro
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 40s
     depends_on:
       mongodb:
         condition: service_healthy
@@ -247,7 +250,13 @@ networks:
     driver: bridge
 COMPOSE_EOF
     
-    # Create test HTML
+    # Set ownership
+    chown -R ubuntu:ubuntu /home/ubuntu/todo_infrastructure
+    
+    # Build and start containers
+    cd /home/ubuntu/todo_infrastructure/Deployee
+    docker-compose build
+    docker-compose up -d
     mkdir -p html
     cat > html/index.html <<'HTML_EOF'
 <!DOCTYPE html>

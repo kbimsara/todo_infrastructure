@@ -1,43 +1,46 @@
-# .github/workflows/terraform-deploy.yml
-# Updated workflow that handles existing instance group
+# .github/workflows/terraform-destroy.yml
+# Manual workflow to destroy GCP infrastructure
 
-name: Deploy Infrastructure to GCP
+name: Destroy Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Action to perform'
+      confirmation:
+        description: 'Type "destroy" to confirm deletion of all infrastructure'
         required: true
-        default: 'apply'
-        type: choice
-        options:
-          - apply
-          - destroy
-          - clean-apply
+        type: string
 
 jobs:
-  terraform:
-    name: 'Terraform'
+  destroy:
+    name: 'Terraform Destroy'
     runs-on: ubuntu-latest
     
     steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "destroy" ]; then
+            echo "❌ Confirmation failed. You must type 'destroy' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated. Proceeding with destroy..."
+      
       - name: Checkout
         uses: actions/checkout@v4
       
+      # Authenticate using Service Account Key
       - name: Setup Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-      
+      # Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.0
       
+      # Create terraform.tfvars
       - name: Create terraform.tfvars
         working-directory: ./infrastructure
         run: |
@@ -48,103 +51,20 @@ jobs:
           github_repo = "https://github.com/${{ github.repository }}.git"
           EOF
       
+      # Terraform Init
       - name: Terraform Init
         working-directory: ./infrastructure
         run: terraform init
       
-      # Clean up if 'clean-apply' is selected
-      - name: Clean Up Existing Resources
-        if: github.event.inputs.action == 'clean-apply'
-        working-directory: ./infrastructure
-        run: |
-          echo "🧹 Cleaning up existing resources..."
-          
-          # Delete instance group (this is causing the error)
-          gcloud compute instance-groups unmanaged delete todo-app-instance-group \
-            --zone=us-central1-a --quiet 2>/dev/null || echo "Instance group not found"
-          
-          # Try to destroy via Terraform first
-          terraform destroy -auto-approve || true
-          
-          # Manually delete remaining resources
-          gcloud compute forwarding-rules delete todo-app-http-forwarding-rule --global --quiet 2>/dev/null || true
-          gcloud compute target-http-proxies delete todo-app-http-proxy --quiet 2>/dev/null || true
-          gcloud compute url-maps delete todo-app-load-balancer --quiet 2>/dev/null || true
-          gcloud compute backend-services delete todo-app-backend --global --quiet 2>/dev/null || true
-          gcloud compute instances delete todo-app-vm --zone=us-central1-a --quiet 2>/dev/null || true
-          gcloud compute health-checks delete todo-app-health-check --quiet 2>/dev/null || true
-          gcloud compute firewall-rules delete allow-http --quiet 2>/dev/null || true
-          gcloud compute firewall-rules delete allow-https --quiet 2>/dev/null || true
-          gcloud compute firewall-rules delete allow-health-check --quiet 2>/dev/null || true
-          gcloud compute firewall-rules delete allow-ssh-todo --quiet 2>/dev/null || true
-          gcloud compute firewall-rules delete allow-app-port-3000 --quiet 2>/dev/null || true
-          gcloud compute addresses delete todo-app-static-ip --global --quiet 2>/dev/null || true
-          
-          echo "✅ Cleanup complete"
-      
-      # Try to import existing resources if they exist
-      - name: Import Existing Resources
-        if: github.event.inputs.action == 'apply'
-        working-directory: ./infrastructure
-        run: |
-          echo "📥 Attempting to import existing resources..."
-          terraform import google_compute_firewall.allow_http allow-http 2>/dev/null || echo "  • allow-http doesn't exist or already in state"
-          terraform import google_compute_firewall.allow_https allow-https 2>/dev/null || echo "  • allow-https doesn't exist or already in state"
-          terraform import google_compute_firewall.allow_health_check allow-health-check 2>/dev/null || echo "  • allow-health-check doesn't exist or already in state"
-          terraform import google_compute_firewall.allow_ssh allow-ssh-todo 2>/dev/null || echo "  • allow-ssh-todo doesn't exist or already in state"
-          terraform import google_compute_firewall.allow_app_port allow-app-port-3000 2>/dev/null || echo "  • allow-app-port-3000 doesn't exist or already in state"
-          terraform import google_compute_global_address.nextjs_ip todo-app-static-ip 2>/dev/null || echo "  • todo-app-static-ip doesn't exist or already in state"
-          terraform import google_compute_health_check.nextjs_health_check todo-app-health-check 2>/dev/null || echo "  • health check doesn't exist or already in state"
-          terraform import google_compute_instance.nextjs_vm us-central1-a/todo-app-vm 2>/dev/null || echo "  • VM doesn't exist or already in state"
-          terraform import google_compute_instance_group.nextjs_ig us-central1-a/todo-app-instance-group 2>/dev/null || echo "  • instance group doesn't exist or already in state"
-          echo "✅ Import attempt complete"
-        continue-on-error: true
-      
-      - name: Terraform Plan
-        working-directory: ./infrastructure
-        run: terraform plan -out=tfplan
-      
-      - name: Terraform Apply
-        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
-        working-directory: ./infrastructure
-        run: terraform apply -auto-approve tfplan
-      
+      # Terraform Destroy
       - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
-        working-directory: ./infrastructure
-        run: terraform destroy -auto-approve
-      
-      - name: Get Outputs
-        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
-        id: outputs
         working-directory: ./infrastructure
         run: |
-          echo "vm_ip=$(terraform output -raw vm_external_ip 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
-          echo "lb_ip=$(terraform output -raw load_balancer_ip 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
-          echo "direct_url=$(terraform output -raw direct_vm_url 2>/dev/null || echo 'pending')" >> $GITHUB_OUTPUT
+          echo "🗑️  Destroying infrastructure..."
+          terraform destroy -auto-approve
       
-      - name: Display Results
-        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
+      # Confirmation
+      - name: Destroy Complete
         run: |
-          echo "## 🎉 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Access Your Application" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Direct Access (Works Immediately):**" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.outputs.outputs.direct_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Load Balancer (Wait 5-10 minutes):**" >> $GITHUB_STEP_SUMMARY
-          echo "http://${{ steps.outputs.outputs.lb_ip }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔍 Debugging" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# SSH to VM" >> $GITHUB_STEP_SUMMARY
-          echo "gcloud compute ssh todo-app-vm --zone=us-central1-a" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Check containers" >> $GITHUB_STEP_SUMMARY
-          echo "sudo docker ps" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          
-          echo "✅ Deployment Complete!"
-          echo "🌐 Direct Access: ${{ steps.outputs.outputs.direct_url }}"
-          echo "⏳ Load Balancer: http://${{ steps.outputs.outputs.lb_ip }} (wait 10 min)"
+          echo "✅ Infrastructure destroyed successfully!"
+          echo "All GCP resources have been removed."

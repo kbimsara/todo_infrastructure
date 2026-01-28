@@ -481,13 +481,15 @@ resource "google_compute_instance_group" "nextjs_ig" {
   zone = var.zone
 
   instances = [
-    google_compute_instance.nextjs_vm.id
+    google_compute_instance.nextjs_vm.self_link
   ]
 
   named_port {
     name = "http"
     port = 3000
   }
+
+  depends_on = [google_compute_instance.nextjs_vm]
 }
 
 # ============================================

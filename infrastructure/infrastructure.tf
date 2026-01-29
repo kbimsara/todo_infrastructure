@@ -217,26 +217,23 @@ services:
       retries: 5
       start_period: 20s
 
-  # Next.js Todo App
+  # Nginx with custom HTML (for testing - replace with your Next.js app)
   app:
-    build:
-      context: ../Todo App
-      dockerfile: Dockerfile
+    image: nginx:alpine
     container_name: todo-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    environment:
-      - MONGODB_URI=mongodb://mongodb:27017/todoapp
-      - NODE_ENV=production
+      - "3000:80"
     networks:
       - todo-network
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
       retries: 3
-      start_period: 40s
+      start_period: 10s
     depends_on:
       mongodb:
         condition: service_healthy
@@ -250,13 +247,7 @@ networks:
     driver: bridge
 COMPOSE_EOF
     
-    # Set ownership
-    chown -R ubuntu:ubuntu /home/ubuntu/todo_infrastructure
-    
-    # Build and start containers
-    cd /home/ubuntu/todo_infrastructure/Deployee
-    docker-compose build
-    docker-compose up -d
+    # Create test HTML
     mkdir -p html
     cat > html/index.html <<'HTML_EOF'
 <!DOCTYPE html>
@@ -481,15 +472,13 @@ resource "google_compute_instance_group" "nextjs_ig" {
   zone = var.zone
 
   instances = [
-    google_compute_instance.nextjs_vm.self_link
+    google_compute_instance.nextjs_vm.id
   ]
 
   named_port {
     name = "http"
     port = 3000
   }
-
-  depends_on = [google_compute_instance.nextjs_vm]
 }
 
 # ============================================

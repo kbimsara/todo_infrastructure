@@ -1,4 +1,4 @@
-name: 🧹 GCP Infrastructure Cleanup
+name: GCP Infrastructure Cleanup
 
 on:
   workflow_dispatch:
@@ -72,4 +72,4 @@ jobs:
           gcloud compute addresses delete todo-app-static-ip \
             --global --quiet || true
 
-          echo "✅ GCP cleanup completed"
+          echo "GCP cleanup completed"

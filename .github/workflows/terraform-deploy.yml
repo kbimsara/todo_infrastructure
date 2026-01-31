@@ -60,7 +60,7 @@ jobs:
         if: github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
         run: |
-          echo "🧹 Cleaning up existing resources..."
+          echo "Cleaning up existing resources..."
           
           # Try to destroy via Terraform first
           terraform destroy -auto-approve || true
@@ -97,14 +97,14 @@ jobs:
           echo "Deleting static IP..."
           gcloud compute addresses delete todo-app-static-ip --global --quiet 2>/dev/null || true
           
-          echo "✅ Cleanup complete"
+          echo "Cleanup complete"
       
       # Try to import existing resources if they exist
       - name: Import Existing Resources
         if: github.event.inputs.action == 'apply'
         working-directory: ./infrastructure
         run: |
-          echo "📥 Attempting to import existing resources..."
+          echo "Attempting to import existing resources..."
           terraform import google_compute_firewall.allow_http allow-http 2>/dev/null || echo "  • allow-http doesn't exist or already in state"
           terraform import google_compute_firewall.allow_https allow-https 2>/dev/null || echo "  • allow-https doesn't exist or already in state"
           terraform import google_compute_firewall.allow_health_check allow-health-check 2>/dev/null || echo "  • allow-health-check doesn't exist or already in state"
@@ -118,7 +118,7 @@ jobs:
           terraform import google_compute_url_map.nextjs_lb todo-app-load-balancer 2>/dev/null || echo "  • URL map doesn't exist or already in state"
           terraform import google_compute_target_http_proxy.nextjs_http_proxy todo-app-http-proxy 2>/dev/null || echo "  • HTTP proxy doesn't exist or already in state"
           terraform import google_compute_global_forwarding_rule.nextjs_http_rule todo-app-http-forwarding-rule 2>/dev/null || echo "  • forwarding rule doesn't exist or already in state"
-          echo "✅ Import attempt complete"
+          echo "Import attempt complete"
         continue-on-error: true
       
       - name: Terraform Plan
@@ -147,17 +147,17 @@ jobs:
       - name: Display Results
         if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
         run: |
-          echo "## 🎉 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Complete!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Your Application is Ready!" >> $GITHUB_STEP_SUMMARY
+          echo "### Your Application is Ready!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**✅ Direct VM Access (Works NOW):**" >> $GITHUB_STEP_SUMMARY
+          echo "**Direct VM Access (Works NOW):**" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.outputs.outputs.direct_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**⏳ Load Balancer (Wait 5-10 minutes):**" >> $GITHUB_STEP_SUMMARY
+          echo "**Load Balancer (Wait 5-10 minutes):**" >> $GITHUB_STEP_SUMMARY
           echo "http://${{ steps.outputs.outputs.lb_ip }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔍 Quick Commands" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Commands" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# SSH to VM" >> $GITHUB_STEP_SUMMARY
           echo "gcloud compute ssh todo-app-vm --zone=us-central1-a" >> $GITHUB_STEP_SUMMARY
@@ -170,11 +170,11 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           
           echo "=========================================="
-          echo "🎉 DEPLOYMENT COMPLETE!"
+          echo "DEPLOYMENT COMPLETE!"
           echo "=========================================="
           echo ""
-          echo "✅ Direct Access: ${{ steps.outputs.outputs.direct_url }}"
-          echo "⏳ Load Balancer: http://${{ steps.outputs.outputs.lb_ip }}"
+          echo "Direct Access: ${{ steps.outputs.outputs.direct_url }}"
+          echo "Load Balancer: http://${{ steps.outputs.outputs.lb_ip }}"
           echo ""
           echo "Try the direct URL first - it works immediately!"
       
@@ -183,5 +183,5 @@ jobs:
         run: |
           echo "Waiting 30 seconds before checking backend health..."
           sleep 30
-          gcloud compute backend-services get-health todo-app-backend --global || echo "⏳ Backend not ready yet (this is normal, wait 10 minutes)"
+          gcloud compute backend-services get-health todo-app-backend --global || echo "Backend not ready yet (this is normal, wait 10 minutes)"
         continue-on-error: true

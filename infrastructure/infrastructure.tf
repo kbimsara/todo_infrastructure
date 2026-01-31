@@ -168,95 +168,154 @@ resource "google_compute_instance" "nextjs_vm" {
     #!/bin/bash
     set -e
     
-    # Log everything
+    # Log everything to /var/log/startup-script.log
     exec > >(tee -a /var/log/startup-script.log)
     exec 2>&1
     
-    echo "[$(date)] Starting deployment..."
+    echo "[$(date)] ========================================"
+    echo "[$(date)] Starting deployment process..."
+    echo "[$(date)] ========================================"
     
-    # Update system
-    apt-get update
-    apt-get install -y docker.io git curl
+    # Function for error handling
+    handle_error() {
+      echo "[$(date)] ERROR: $1" >&2
+      exit 1
+    }
     
-    systemctl start docker
-    systemctl enable docker
+    # Update system and install dependencies
+    echo "[$(date)] Installing system dependencies..."
+    apt-get update || handle_error "Failed to update package lists"
+    apt-get install -y docker.io git curl wget || handle_error "Failed to install packages"
+    
+    echo "[$(date)] Starting Docker service..."
+    systemctl start docker || handle_error "Failed to start Docker"
+    systemctl enable docker || handle_error "Failed to enable Docker"
     
     # Install Docker Compose
-    curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    echo "[$(date)] Installing Docker Compose..."
+    curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose || handle_error "Failed to download Docker Compose"
     chmod +x /usr/local/bin/docker-compose
     
+    # Verify Docker Compose installation
+    docker-compose --version || handle_error "Docker Compose installation failed"
+    
     # Add ubuntu user to docker group
+    echo "[$(date)] Configuring Docker permissions..."
     usermod -aG docker ubuntu
     
-    # Create app directory
-    mkdir -p /home/ubuntu/app
-    cd /home/ubuntu/app
+    # Set up repository directory
+    REPO_DIR="/home/ubuntu/app"
+    echo "[$(date)] Setting up repository at $REPO_DIR..."
     
-    # Create docker-compose.yml with working test app
-    cat > docker-compose.yml <<'COMPOSE_EOF'
-version: '3.8'
-
-services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7.0
-    container_name: todo-mongodb
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_DATABASE: todoapp
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - todo-network
-    healthcheck:
-      test: mongosh --eval 'db.runCommand("ping").ok' --quiet
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # Next.js Todo App
-  app:
-    build:
-      context: ../Todo App
-      dockerfile: Dockerfile
-    container_name: todo-app
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - MONGODB_URI=mongodb://mongodb:27017/todoapp
-      - NODE_ENV=production
-    networks:
-      - todo-network
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    depends_on:
-      mongodb:
-        condition: service_healthy
-
-volumes:
-  mongodb_data:
-    driver: local
-
-networks:
-  todo-network:
-    driver: bridge
-COMPOSE_EOF
+    # Clone or update repository (idempotent)
+    if [ -d "$REPO_DIR/.git" ]; then
+      echo "[$(date)] Repository already exists. Updating..."
+      cd "$REPO_DIR"
+      git fetch origin || handle_error "Failed to fetch from remote"
+      git reset --hard origin/main || git reset --hard origin/master || handle_error "Failed to reset repository"
+      git pull || handle_error "Failed to pull latest changes"
+    else
+      echo "[$(date)] Cloning repository from ${var.github_repo}..."
+      rm -rf "$REPO_DIR"
+      git clone "${var.github_repo}" "$REPO_DIR" || handle_error "Failed to clone repository"
+    fi
     
-    # Set ownership
-    chown -R ubuntu:ubuntu /home/ubuntu/todo_infrastructure
+    # Verify repository structure
+    echo "[$(date)] Verifying repository structure..."
+    if [ ! -d "$REPO_DIR/Deployee" ]; then
+      handle_error "Deployee directory not found in repository"
+    fi
+    if [ ! -f "$REPO_DIR/Deployee/docker-compose.yml" ]; then
+      handle_error "docker-compose.yml not found in Deployee directory"
+    fi
+    if [ ! -d "$REPO_DIR/Todo App" ]; then
+      handle_error "Todo App directory not found in repository"
+    fi
     
-    # Build and start containers
-    cd /home/ubuntu/todo_infrastructure/Deployee
-    docker-compose build
-    docker-compose up -d
+    echo "[$(date)] Repository structure verified successfully"
+    
+    # Set proper ownership
+    echo "[$(date)] Setting file permissions..."
+    chown -R ubuntu:ubuntu "$REPO_DIR"
+    
+    # Navigate to deployment directory
+    cd "$REPO_DIR/Deployee" || handle_error "Failed to navigate to Deployee directory"
+    echo "[$(date)] Current directory: $(pwd)"
+    
+    # Show docker-compose configuration
+    echo "[$(date)] Docker Compose configuration:"
+    cat docker-compose.yml
+    
+    # Pull images
+    echo "[$(date)] Pulling Docker images..."
+    docker-compose pull mongodb || handle_error "Failed to pull MongoDB image"
+    
+    # Build application
+    echo "[$(date)] Building application Docker image..."
+    docker-compose build --no-cache app || handle_error "Failed to build application image"
+    
+    # Stop any existing containers
+    echo "[$(date)] Stopping any existing containers..."
+    docker-compose down || true
+    
+    # Start containers
+    echo "[$(date)] Starting containers..."
+    docker-compose up -d || handle_error "Failed to start containers"
+    
+    # Wait for containers to be healthy
+    echo "[$(date)] Waiting for containers to be healthy..."
+    MAX_WAIT=180  # 3 minutes
+    ELAPSED=0
+    INTERVAL=5
+    
+    while [ $ELAPSED -lt $MAX_WAIT ]; do
+      MONGODB_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' todo-mongodb 2>/dev/null || echo "starting")
+      APP_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' todo-app 2>/dev/null || echo "starting")
+      
+      echo "[$(date)] Health status - MongoDB: $MONGODB_HEALTH, App: $APP_HEALTH"
+      
+      if [ "$MONGODB_HEALTH" = "healthy" ] && [ "$APP_HEALTH" = "healthy" ]; then
+        echo "[$(date)] ✓ All containers are healthy!"
+        break
+      fi
+      
+      sleep $INTERVAL
+      ELAPSED=$((ELAPSED + INTERVAL))
+    done
+    
+    if [ $ELAPSED -ge $MAX_WAIT ]; then
+      echo "[$(date)] WARNING: Containers did not become healthy within timeout"
+      echo "[$(date)] Container status:"
+      docker-compose ps
+      echo "[$(date)] Container logs:"
+      docker-compose logs --tail=50
+    fi
+    
+    # Show container status
+    echo "[$(date)] Final container status:"
+    docker-compose ps
+    
+    # Test local access to health endpoint
+    echo "[$(date)] Testing application health endpoint..."
+    sleep 10  # Give app a bit more time
+    if curl -f -s http://localhost:3000/api/health > /dev/null 2>&1; then
+      echo "[$(date)] ✓ Health endpoint responding successfully"
+    else
+      echo "[$(date)] WARNING: Health endpoint not responding yet"
+      echo "[$(date)] Attempting root endpoint..."
+      curl -s http://localhost:3000 > /dev/null && echo "[$(date)] ✓ App responding on root endpoint" || echo "[$(date)] ✗ App not responding"
+    fi
+    
+    # Get external IP
+    EXTERNAL_IP=$(curl -s http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip -H 'Metadata-Flavor: Google')
+    
+    echo "[$(date)] ========================================"
+    echo "[$(date)] Deployment completed!"
+    echo "[$(date)] ========================================"
+    echo "[$(date)] Direct access URL: http://$EXTERNAL_IP:3000"
+    echo "[$(date)] Health check URL: http://$EXTERNAL_IP:3000/api/health"
+    echo "[$(date)] Logs available at: /var/log/startup-script.log"
+    echo "[$(date)] ========================================"
     mkdir -p html
     cat > html/index.html <<'HTML_EOF'
 <!DOCTYPE html>
@@ -466,7 +525,7 @@ resource "google_compute_health_check" "nextjs_health_check" {
 
   http_health_check {
     port         = 3000
-    request_path = "/health"
+    request_path = "/api/health"
   }
   
   depends_on = [google_project_service.compute]

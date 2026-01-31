@@ -30,7 +30,7 @@ variable "machine_type" {
 
 variable "disk_size_gb" {
   type    = number
-  default = 30
+  default = 40
 }
 
 variable "github_repo" {

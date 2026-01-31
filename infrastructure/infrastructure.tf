@@ -3,7 +3,7 @@
 # VM + Load Balancer + Docker Containers (Next.js + MongoDB)
 
 variable "project_id" {
-  description = "Your GCP Project ID"
+  description = "GCP Project ID"
   type        = string
   default     = "my-app-todo-485623" # Replace with your actual project ID
 }

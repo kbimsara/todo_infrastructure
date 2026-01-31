@@ -1,10 +1,10 @@
-name: GCP Infrastructure Cleanup
+name:  Clean GCP Todo Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type DELETE to confirm cleanup"
+        description: "Type DELETE to confirm infrastructure cleanup"
         required: true
         default: ""
 
@@ -14,9 +14,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -27,9 +24,10 @@ jobs:
         with:
           project_id: my-app-todo-485623
 
-      - name: Delete Compute Engine resources
+      - name:  Delete GCP Resources (Clean & Safe)
         run: |
           set +e
+          echo "Starting cleanup..."
 
           echo "Deleting VM..."
           gcloud compute instances delete todo-app-vm \
@@ -43,8 +41,8 @@ jobs:
           gcloud compute firewall-rules delete \
             allow-http \
             allow-https \
-            allow-ssh-todo \
             allow-health-check \
+            allow-ssh-todo \
             allow-app-port-3000 \
             --quiet || true
 
@@ -72,4 +70,4 @@ jobs:
           gcloud compute addresses delete todo-app-static-ip \
             --global --quiet || true
 
-          echo "GCP cleanup completed"
+          echo "GCP infrastructure cleanup completed successfully"

@@ -5,7 +5,7 @@
 variable "project_id" {
   description = "Your GCP Project ID"
   type        = string
-  default     = "my-app-todo-485623"
+  default     = "my-app-todo-485623" # Replace with your actual project ID
 }
 
 variable "region" {

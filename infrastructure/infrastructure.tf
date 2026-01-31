@@ -188,218 +188,30 @@ resource "google_compute_instance" "nextjs_vm" {
     # Add ubuntu user to docker group
     usermod -aG docker ubuntu
     
-    # Create app directory
-    mkdir -p /home/ubuntu/app
-    cd /home/ubuntu/app
+    # Clone the GitHub repository
+    echo "[$(date)] Cloning repository..."
+    git clone ${var.github_repo} /home/ubuntu/todo_infrastructure
     
-    # Create docker-compose.yml with working test app
-    cat > docker-compose.yml <<'COMPOSE_EOF'
-version: '3.8'
-
-services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7.0
-    container_name: todo-mongodb
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_DATABASE: todoapp
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - todo-network
-    healthcheck:
-      test: mongosh --eval 'db.runCommand("ping").ok' --quiet
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # Nginx with custom HTML (for testing - replace with your Next.js app)
-  app:
-    image: nginx:alpine
-    container_name: todo-app
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    networks:
-      - todo-network
-    volumes:
-      - ./html:/usr/share/nginx/html:ro
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    depends_on:
-      mongodb:
-        condition: service_healthy
-
-volumes:
-  mongodb_data:
-    driver: local
-
-networks:
-  todo-network:
-    driver: bridge
-COMPOSE_EOF
+    # Create .env.local file (gitignored, so must be created manually)
+    echo "[$(date)] Creating .env.local file..."
+    cat > "/home/ubuntu/todo_infrastructure/Todo App/.env.local" <<'ENV_EOF'
+MONGODB_URI=mongodb://mongodb:27017/todoapp
+ENV_EOF
     
-    # Create test HTML
-    mkdir -p html
-    cat > html/index.html <<'HTML_EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Todo App - Running!</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 16px;
-            padding: 60px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
-            max-width: 700px;
-        }
-        h1 {
-            font-size: 3rem;
-            color: #333;
-            margin-bottom: 20px;
-        }
-        .status {
-            display: inline-block;
-            background: #34a853;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 50px;
-            font-weight: 600;
-            margin: 20px 0;
-            font-size: 1.2rem;
-        }
-        .badge {
-            display: inline-block;
-            background: #4285f4;
-            color: white;
-            padding: 8px 20px;
-            border-radius: 50px;
-            font-size: 0.9rem;
-            margin: 5px;
-        }
-        .info {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 30px;
-            text-align: left;
-        }
-        .info p {
-            margin: 10px 0;
-            color: #666;
-        }
-        .info strong {
-            color: #333;
-        }
-        .emoji { font-size: 4rem; margin: 20px 0; }
-        .access-box {
-            margin-top: 30px;
-            padding: 20px;
-            background: #e8f5e9;
-            border-radius: 8px;
-            border-left: 4px solid #34a853;
-        }
-        .access-box h3 {
-            color: #2d9048;
-            margin-bottom: 15px;
-        }
-        .access-box ul {
-            list-style: none;
-            padding: 0;
-            text-align: left;
-        }
-        .access-box li {
-            padding: 8px 0;
-            color: #666;
-        }
-        .access-box li:before {
-            content: "✓ ";
-            color: #34a853;
-            font-weight: bold;
-            margin-right: 8px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="emoji">🎉</div>
-        <h1>Todo App Deployed!</h1>
-        <div class="status">✓ Infrastructure Running</div>
-        
-        <div style="margin: 20px 0;">
-            <span class="badge">Docker ✓</span>
-            <span class="badge">MongoDB ✓</span>
-            <span class="badge">Nginx ✓</span>
-            <span class="badge">Firewall ✓</span>
-        </div>
-        
-        <div class="access-box">
-            <h3>✅ Direct Access Enabled!</h3>
-            <ul>
-                <li>You can access this page directly via VM IP</li>
-                <li>Load Balancer access also available (wait 10 min)</li>
-                <li>SSH access enabled for debugging</li>
-                <li>Port 3000 open to the internet</li>
-            </ul>
-        </div>
-        
-        <div class="info">
-            <p><strong>Infrastructure Status:</strong></p>
-            <p>✓ VM Instance: Running</p>
-            <p>✓ MongoDB: Connected and healthy</p>
-            <p>✓ Web Server: Responding on port 3000</p>
-            <p>✓ Firewall: Direct access configured</p>
-            <p>⏳ Load Balancer: Provisioning (5-10 min)</p>
-        </div>
-        
-        <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px;">
-            <h3 style="color: #856404; margin-bottom: 10px;">🚀 Next Steps</h3>
-            <ol style="color: #856404; text-align: left; padding-left: 20px;">
-                <li>Build your Next.js Docker image</li>
-                <li>Push to GitHub Container Registry</li>
-                <li>Update docker-compose.yml with your image</li>
-                <li>Redeploy using GitHub Actions</li>
-            </ol>
-        </div>
-    </div>
-    
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('✅ Todo App Infrastructure Deployed!');
-            console.log('📍 Current URL:', window.location.href);
-        });
-    </script>
-</body>
-</html>
-HTML_EOF
-    
-    # Create health check endpoint
-    cat > html/health <<'HEALTH_EOF'
-OK
+    # Create health check endpoint for Next.js
+    echo "[$(date)] Creating health check endpoint..."
+    mkdir -p "/home/ubuntu/todo_infrastructure/Todo App/app/api/health"
+    cat > "/home/ubuntu/todo_infrastructure/Todo App/app/api/health/route.ts" <<'HEALTH_EOF'
+export async function GET() {
+  return new Response("OK", { status: 200 });
+}
 HEALTH_EOF
     
     # Set ownership
-    chown -R ubuntu:ubuntu /home/ubuntu/app
+    chown -R ubuntu:ubuntu /home/ubuntu/todo_infrastructure
+    
+    # Navigate to Deployee directory
+    cd /home/ubuntu/todo_infrastructure/Deployee
     
     # Pull images
     echo "[$(date)] Pulling Docker images..."
@@ -419,7 +231,7 @@ HEALTH_EOF
     
     # Test local access
     echo "[$(date)] Testing local access..."
-    curl -s http://localhost:3000 > /dev/null && echo "✓ App responding on port 3000" || echo "✗ App not responding"
+    curl -s http://localhost:3000/api/health > /dev/null && echo "✓ App responding on port 3000" || echo "✗ App not responding"
     
     echo "[$(date)] Deployment completed!"
     
@@ -457,7 +269,7 @@ resource "google_compute_health_check" "nextjs_health_check" {
 
   http_health_check {
     port         = 3000
-    request_path = "/health"
+    request_path = "/api/health"
   }
   
   depends_on = [google_project_service.compute]
@@ -564,7 +376,7 @@ output "check_startup_logs" {
 
 output "check_containers" {
   description = "Check container status"
-  value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cd /home/ubuntu/app && sudo docker-compose ps'"
+  value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cd /home/ubuntu/todo_infrastructure/Deployee && sudo docker-compose ps'"
 }
 
 output "check_backend_health" {

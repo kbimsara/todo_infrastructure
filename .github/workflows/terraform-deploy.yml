@@ -1,5 +1,5 @@
 # .github/workflows/terraform-deploy.yml
-# Auto-detects infrastructure changes and applies them
+# Complete workflow that handles ALL existing resources
 
 name: Deploy Infrastructure to GCP
 
@@ -15,7 +15,6 @@ on:
           - apply
           - destroy
           - clean-apply
-          - plan-only
 
 env:
   TF_VERSION: '1.6.0'
@@ -61,13 +60,10 @@ jobs:
         if: github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
         run: |
-          echo " Cleaning up existing resources..."
+          echo "Cleaning up existing resources..."
           
           # Try to destroy via Terraform first
           terraform destroy -auto-approve || true
-          
-          # Wait a bit for resources to be released
-          sleep 10
           
           # Manually delete any remaining resources IN CORRECT ORDER
           echo "Deleting forwarding rule..."
@@ -101,130 +97,43 @@ jobs:
           echo "Deleting static IP..."
           gcloud compute addresses delete todo-app-static-ip --global --quiet 2>/dev/null || true
           
-          # Remove terraform state to start fresh
-          rm -f terraform.tfstate terraform.tfstate.backup .terraform.lock.hcl
-          rm -rf .terraform
-          
-          # Re-initialize
-          terraform init
-          
           echo "Cleanup complete"
       
-      # Import existing resources for regular apply
-      - name: Smart Import of Existing Resources
+      # Try to import existing resources if they exist
+      - name: Import Existing Resources
         if: github.event.inputs.action == 'apply'
         working-directory: ./infrastructure
         run: |
-          echo "Checking for existing resources to import..."
-          
-          # Function to attempt import
-          import_resource() {
-            local resource_type=$1
-            local resource_name=$2
-            local gcp_name=$3
-            
-            # Check if already in state
-            if terraform state list | grep -q "$resource_type.$resource_name"; then
-              echo "  ✓ $resource_name already in state"
-              return 0
-            fi
-            
-            # Try to import
-            if terraform import "$resource_type.$resource_name" "$gcp_name" 2>/dev/null; then
-              echo "  ✓ Imported $resource_name"
-            else
-              echo "  • $resource_name doesn't exist or already managed"
-            fi
-          }
-          
-          # Import firewall rules
-          import_resource "google_compute_firewall" "allow_http" "allow-http"
-          import_resource "google_compute_firewall" "allow_https" "allow-https"
-          import_resource "google_compute_firewall" "allow_health_check" "allow-health-check"
-          import_resource "google_compute_firewall" "allow_ssh" "allow-ssh-todo"
-          import_resource "google_compute_firewall" "allow_app_port" "allow-app-port-3000"
-          
-          # Import networking
-          import_resource "google_compute_global_address" "nextjs_ip" "todo-app-static-ip"
-          import_resource "google_compute_health_check" "nextjs_health_check" "todo-app-health-check"
-          
-          # Import compute resources
-          import_resource "google_compute_instance" "nextjs_vm" "us-central1-a/todo-app-vm"
-          import_resource "google_compute_instance_group" "nextjs_ig" "us-central1-a/todo-app-instance-group"
-          
-          # Import load balancer components
-          import_resource "google_compute_backend_service" "nextjs_backend" "todo-app-backend"
-          import_resource "google_compute_url_map" "nextjs_lb" "todo-app-load-balancer"
-          import_resource "google_compute_target_http_proxy" "nextjs_http_proxy" "todo-app-http-proxy"
-          import_resource "google_compute_global_forwarding_rule" "nextjs_http_rule" "todo-app-http-forwarding-rule"
-          
-          echo "Import check complete"
+          echo "Attempting to import existing resources..."
+          terraform import google_compute_firewall.allow_http allow-http 2>/dev/null || echo "  • allow-http doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_https allow-https 2>/dev/null || echo "  • allow-https doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_health_check allow-health-check 2>/dev/null || echo "  • allow-health-check doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_ssh allow-ssh-todo 2>/dev/null || echo "  • allow-ssh-todo doesn't exist or already in state"
+          terraform import google_compute_firewall.allow_app_port allow-app-port-3000 2>/dev/null || echo "  • allow-app-port-3000 doesn't exist or already in state"
+          terraform import google_compute_global_address.nextjs_ip todo-app-static-ip 2>/dev/null || echo "  • todo-app-static-ip doesn't exist or already in state"
+          terraform import google_compute_health_check.nextjs_health_check todo-app-health-check 2>/dev/null || echo "  • health check doesn't exist or already in state"
+          terraform import google_compute_instance.nextjs_vm us-central1-a/todo-app-vm 2>/dev/null || echo "  • VM doesn't exist or already in state"
+          terraform import google_compute_instance_group.nextjs_ig us-central1-a/todo-app-instance-group 2>/dev/null || echo "  • instance group doesn't exist or already in state"
+          terraform import google_compute_backend_service.nextjs_backend todo-app-backend 2>/dev/null || echo "  • backend service doesn't exist or already in state"
+          terraform import google_compute_url_map.nextjs_lb todo-app-load-balancer 2>/dev/null || echo "  • URL map doesn't exist or already in state"
+          terraform import google_compute_target_http_proxy.nextjs_http_proxy todo-app-http-proxy 2>/dev/null || echo "  • HTTP proxy doesn't exist or already in state"
+          terraform import google_compute_global_forwarding_rule.nextjs_http_rule todo-app-http-forwarding-rule 2>/dev/null || echo "  • forwarding rule doesn't exist or already in state"
+          echo "Import attempt complete"
         continue-on-error: true
       
       - name: Terraform Plan
-        id: plan
         working-directory: ./infrastructure
-        run: |
-          echo "Planning infrastructure changes..."
-          terraform plan -detailed-exitcode -out=tfplan || exit_code=$?
-          
-          # Exit codes: 0 = no changes, 1 = error, 2 = changes present
-          if [ "${exit_code}" == "1" ]; then
-            echo "Planning failed"
-            exit 1
-          elif [ "${exit_code}" == "2" ]; then
-            echo "changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected - will apply"
-          else
-            echo "changes=false" >> $GITHUB_OUTPUT
-            echo "No infrastructure changes needed"
-          fi
-        continue-on-error: false
-      
-      - name: Show Plan Summary
-        if: steps.plan.outputs.changes == 'true'
-        working-directory: ./infrastructure
-        run: |
-          echo "## Infrastructure Changes Detected" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The following changes will be applied:" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform show tfplan >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+        run: terraform plan -out=tfplan
       
       - name: Terraform Apply
-        if: |
-          (github.event.inputs.action == 'apply' && steps.plan.outputs.changes == 'true') || 
-          github.event.inputs.action == 'clean-apply'
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
-        run: |
-          echo "Applying infrastructure changes..."
-          terraform apply -auto-approve tfplan
-          echo "Apply complete"
-      
-      - name: No Changes Needed
-        if: github.event.inputs.action == 'apply' && steps.plan.outputs.changes == 'false'
-        run: |
-          echo "## No Changes Required" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Your infrastructure is already up to date with the configuration." >> $GITHUB_STEP_SUMMARY
-          echo "No changes were applied." >> $GITHUB_STEP_SUMMARY
+        run: terraform apply -auto-approve tfplan
       
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         working-directory: ./infrastructure
-        run: |
-          echo "Destroying infrastructure..."
-          terraform destroy -auto-approve
-          echo "Destroy complete"
-      
-      - name: Plan Only (No Apply)
-        if: github.event.inputs.action == 'plan-only'
-        working-directory: ./infrastructure
-        run: |
-          echo "## Plan Only - No Changes Applied" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This was a plan-only run. No infrastructure changes were made." >> $GITHUB_STEP_SUMMARY
+        run: terraform destroy -auto-approve
       
       - name: Get Outputs
         if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
@@ -240,15 +149,7 @@ jobs:
         run: |
           echo "## Deployment Complete!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.plan.outputs.changes }}" == "true" ] || [ "${{ github.event.inputs.action }}" == "clean-apply" ]; then
-            echo "### Infrastructure Updated Successfully" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### Infrastructure Already Up to Date" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Access Your Application" >> $GITHUB_STEP_SUMMARY
+          echo "### Your Application is Ready!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Direct VM Access (Works NOW):**" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.outputs.outputs.direct_url }}" >> $GITHUB_STEP_SUMMARY
@@ -275,16 +176,10 @@ jobs:
           echo "Direct Access: ${{ steps.outputs.outputs.direct_url }}"
           echo "Load Balancer: http://${{ steps.outputs.outputs.lb_ip }}"
           echo ""
-          if [ "${{ steps.plan.outputs.changes }}" == "true" ] || [ "${{ github.event.inputs.action }}" == "clean-apply" ]; then
-            echo "Infrastructure changes applied successfully!"
-          else
-            echo "No infrastructure changes were needed"
-          fi
+          echo "Try the direct URL first - it works immediately!"
       
       - name: Check Backend Health
-        if: |
-          (github.event.inputs.action == 'apply' && steps.plan.outputs.changes == 'true') || 
-          github.event.inputs.action == 'clean-apply'
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'clean-apply'
         run: |
           echo "Waiting 30 seconds before checking backend health..."
           sleep 30

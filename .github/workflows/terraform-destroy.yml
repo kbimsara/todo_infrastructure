@@ -1,4 +1,4 @@
-name:  Clean GCP Todo Infrastructure
+name: Clean GCP Todo Infrastructure
 
 on:
   workflow_dispatch:
@@ -24,17 +24,37 @@ jobs:
         with:
           project_id: my-app-todo-485623
 
-      - name:  Delete GCP Resources (Clean & Safe)
+      - name: Delete GCP Resources (Clean & Safe)
         run: |
           set +e
-          echo "Starting cleanup..."
+          echo "Starting GCP cleanup..."
 
-          echo "Deleting VM..."
-          gcloud compute instances delete todo-app-vm \
-            --zone=us-central1-a --quiet || true
+          echo "Deleting forwarding rule..."
+          gcloud compute forwarding-rules delete todo-app-http-forwarding-rule \
+            --global --quiet || true
+
+          echo "Deleting target HTTP proxy..."
+          gcloud compute target-http-proxies delete todo-app-http-proxy \
+            --quiet || true
+
+          echo "Deleting URL map..."
+          gcloud compute url-maps delete todo-app-load-balancer \
+            --quiet || true
+
+          echo "Deleting backend service..."
+          gcloud compute backend-services delete todo-app-backend \
+            --global --quiet || true
+
+          echo "Deleting health check..."
+          gcloud compute health-checks delete todo-app-health-check \
+            --quiet || true
 
           echo "Deleting instance group..."
           gcloud compute instance-groups unmanaged delete todo-app-instance-group \
+            --zone=us-central1-a --quiet || true
+
+          echo "Deleting VM..."
+          gcloud compute instances delete todo-app-vm \
             --zone=us-central1-a --quiet || true
 
           echo "Deleting firewall rules..."
@@ -46,28 +66,8 @@ jobs:
             allow-app-port-3000 \
             --quiet || true
 
-          echo "Deleting health check..."
-          gcloud compute health-checks delete todo-app-health-check \
-            --quiet || true
-
-          echo "Deleting backend service..."
-          gcloud compute backend-services delete todo-app-backend \
-            --global --quiet || true
-
-          echo "Deleting URL map..."
-          gcloud compute url-maps delete todo-app-load-balancer \
-            --quiet || true
-
-          echo "Deleting HTTP proxy..."
-          gcloud compute target-http-proxies delete todo-app-http-proxy \
-            --quiet || true
-
-          echo "Deleting forwarding rule..."
-          gcloud compute forwarding-rules delete todo-app-http-forwarding-rule \
-            --global --quiet || true
-
           echo "Deleting static IP..."
           gcloud compute addresses delete todo-app-static-ip \
             --global --quiet || true
 
-          echo "GCP infrastructure cleanup completed successfully"
+          echo " GCP infrastructure cleanup completed successfully"

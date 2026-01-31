@@ -132,6 +132,11 @@ terraform plan
 terraform apply
 ```
 
+**Infrastructure Initialization:**
+
+![Terraform Init Step 1](IMG/Infa%20init%201.png)
+![Terraform Init Step 2](IMG/Infa%20init%202.png)
+
 #### 4. Access Your Application
 
 After deployment, Terraform outputs will show:
@@ -225,6 +230,10 @@ To destroy all GCP resources:
 cd infrastructure
 terraform destroy
 ```
+
+**Infrastructure Cleanup:**
+
+![Terraform Destroy](IMG/Infa%20clean.png)
 
 Or use the GitHub Actions workflow: `terraform-destroy.yml`
 

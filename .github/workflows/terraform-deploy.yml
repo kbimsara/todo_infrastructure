@@ -61,7 +61,7 @@ jobs:
         if: github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
         run: |
-          echo " Cleaning up existing resources..."
+          echo "Cleaning up existing resources..."
           
           # Try to destroy via Terraform first
           terraform destroy -auto-approve || true
@@ -125,13 +125,13 @@ jobs:
             
             # Check if already in state
             if terraform state list | grep -q "$resource_type.$resource_name"; then
-              echo "  ✓ $resource_name already in state"
+              echo "  $resource_name already in state"
               return 0
             fi
             
             # Try to import
             if terraform import "$resource_type.$resource_name" "$gcp_name" 2>/dev/null; then
-              echo "  ✓ Imported $resource_name"
+              echo "  Imported $resource_name"
             else
               echo "  • $resource_name doesn't exist or already managed"
             fi
@@ -182,14 +182,14 @@ jobs:
         continue-on-error: false
       
       - name: Show Plan Summary
-        if: steps.plan.outputs.changes == 'true'
+        if: steps.plan.outputs.changes == 'true' || github.event.inputs.action == 'clean-apply'
         working-directory: ./infrastructure
         run: |
           echo "## Infrastructure Changes Detected" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The following changes will be applied:" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform show tfplan >> $GITHUB_STEP_SUMMARY
+          terraform show tfplan 2>/dev/null || echo "Plan will be created during apply" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
       
       - name: Terraform Apply
@@ -199,6 +199,14 @@ jobs:
         working-directory: ./infrastructure
         run: |
           echo "Applying infrastructure changes..."
+          
+          # For clean-apply, create a fresh plan since state was wiped
+          if [ "${{ github.event.inputs.action }}" == "clean-apply" ]; then
+            echo "Creating fresh plan for clean-apply..."
+            terraform plan -out=tfplan
+          fi
+          
+          # Apply the plan
           terraform apply -auto-approve tfplan
           echo "Apply complete"
       

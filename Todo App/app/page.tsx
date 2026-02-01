@@ -104,7 +104,7 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-100 mb-2">
-            Todo App
+            Todo App - Check UI Update
           </h1>
           <p className="text-gray-400">
             Organize your tasks efficiently

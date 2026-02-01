@@ -80,8 +80,14 @@ jobs:
               
               echo '[Deployment] Starting application deployment...'
               
+              # Fix Git ownership issue
+              sudo git config --global --add safe.directory ${{ env.APP_DIR }}
+              
               # Navigate to app directory
               cd ${{ env.APP_DIR }}
+              
+              # Fix ownership of the directory
+              sudo chown -R ubuntu:ubuntu ${{ env.APP_DIR }}
               
               # Stash any local changes
               git stash || true
@@ -210,7 +216,13 @@ jobs:
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.ZONE }} \
             --command="
+              # Fix Git ownership issue
+              sudo git config --global --add safe.directory ${{ env.APP_DIR }}
+              
               cd ${{ env.APP_DIR }}
+              
+              # Fix ownership
+              sudo chown -R ubuntu:ubuntu ${{ env.APP_DIR }}
               
               echo '[Rollback] Reverting to previous version...'
               git reset --hard HEAD~1
@@ -221,6 +233,7 @@ jobs:
               sudo docker-compose build app
               
               echo '[Rollback] Restarting containers...'
+              sudo docker-compose down
               sudo docker-compose up -d
               
               echo '[Rollback] Rollback complete'

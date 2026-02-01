@@ -4,11 +4,11 @@
 name: Deploy Application Updates
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'Todo App/**'
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'Todo App/**'
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -86,30 +86,26 @@ jobs:
               # Fix .git directory permissions specifically
               sudo chmod -R u+rwX ${{ env.APP_DIR }}/.git
               
-              # Navigate to app directory and clean up locks
+              # Fix Git ownership issue for ubuntu user
+              git config --global --add safe.directory ${{ env.APP_DIR }}
+              
+              # Navigate to app directory
               cd ${{ env.APP_DIR }}
+              
+              # Clean up any stale git locks
               sudo rm -f .git/index.lock .git/FETCH_HEAD.lock || true
               
-              # Run git commands as ubuntu user
-              sudo -u ubuntu bash << 'EOF'
-                set -e
-                cd ${{ env.APP_DIR }}
-                
-                # Configure git safe directory for ubuntu user
-                git config --global --add safe.directory ${{ env.APP_DIR }}
-                
-                # Stash any local changes
-                git stash || true
-                
-                # Pull latest changes
-                echo '[Deployment] Pulling latest code from repository...'
-                git fetch origin
-                git checkout main
-                git pull origin main
-EOF
+              # Stash any local changes
+              git stash || true
+              
+              # Pull latest changes
+              echo '[Deployment] Pulling latest code from repository...'
+              git fetch origin
+              git checkout main
+              git pull origin main
               
               # Navigate to deployment directory
-              cd ${{ env.APP_DIR }}/Deployee
+              cd Deployee
               
               # Stop containers gracefully
               echo '[Deployment] Stopping containers...'
@@ -232,24 +228,18 @@ EOF
               # Fix .git directory permissions
               sudo chmod -R u+rwX ${{ env.APP_DIR }}/.git
               
+              # Fix Git ownership issue for ubuntu user
+              git config --global --add safe.directory ${{ env.APP_DIR }}
+              
               cd ${{ env.APP_DIR }}
               
               # Clean up any stale git locks
               sudo rm -f .git/index.lock .git/FETCH_HEAD.lock || true
               
-              # Run git commands as ubuntu user
-              sudo -u ubuntu bash << 'EOF'
-                set -e
-                cd ${{ env.APP_DIR }}
-                
-                # Configure git safe directory
-                git config --global --add safe.directory ${{ env.APP_DIR }}
-                
-                echo '[Rollback] Reverting to previous version...'
-                git reset --hard HEAD~1
-EOF
+              echo '[Rollback] Reverting to previous version...'
+              git reset --hard HEAD~1
               
-              cd ${{ env.APP_DIR }}/Deployee
+              cd Deployee
               
               echo '[Rollback] Rebuilding previous version...'
               sudo docker-compose build app

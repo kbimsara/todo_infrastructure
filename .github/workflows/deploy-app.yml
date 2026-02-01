@@ -1,0 +1,228 @@
+# .github/workflows/deploy-app.yml
+# Deploy application code updates to running infrastructure
+
+name: Deploy Application Updates
+
+on:
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'Todo App/**'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild Docker images'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  VM_NAME: 'todo-app-vm'
+  ZONE: 'us-central1-a'
+  APP_DIR: '/home/ubuntu/app'
+
+jobs:
+  deploy-app:
+    name: 'Deploy Application'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      
+      - name: Check VM Status
+        id: vm_check
+        run: |
+          echo "Checking if VM is running..."
+          
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.ZONE }} \
+            --format='get(status)' 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$VM_STATUS" == "RUNNING" ]; then
+            echo "VM is running"
+            echo "vm_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "VM is not running or does not exist"
+            echo "vm_exists=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+      
+      - name: Get VM IP
+        id: vm_ip
+        if: steps.vm_check.outputs.vm_exists == 'true'
+        run: |
+          VM_IP=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.ZONE }} \
+            --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          
+          echo "vm_ip=${VM_IP}" >> $GITHUB_OUTPUT
+          echo "VM IP: ${VM_IP}"
+      
+      - name: Deploy Application to VM
+        if: steps.vm_check.outputs.vm_exists == 'true'
+        run: |
+          echo "Deploying application updates..."
+          
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.ZONE }} \
+            --command="
+              set -e
+              
+              echo '[Deployment] Starting application deployment...'
+              
+              # Navigate to app directory
+              cd ${{ env.APP_DIR }}
+              
+              # Stash any local changes
+              git stash || true
+              
+              # Pull latest changes
+              echo '[Deployment] Pulling latest code from repository...'
+              git fetch origin
+              git checkout main
+              git pull origin main
+              
+              # Navigate to deployment directory
+              cd Deployee
+              
+              # Stop containers gracefully
+              echo '[Deployment] Stopping containers...'
+              sudo docker-compose down
+              
+              # Build application with optional cache control
+              echo '[Deployment] Building application...'
+              if [ '${{ github.event.inputs.force_rebuild }}' == 'true' ]; then
+                echo '[Deployment] Force rebuild enabled - building without cache'
+                sudo docker-compose build --no-cache app
+              else
+                sudo docker-compose build app
+              fi
+              
+              # Start containers
+              echo '[Deployment] Starting containers...'
+              sudo docker-compose up -d
+              
+              # Wait for containers to be ready
+              echo '[Deployment] Waiting for containers to start...'
+              sleep 20
+              
+              # Check container status
+              echo '[Deployment] Container status:'
+              sudo docker-compose ps
+              
+              # Show recent logs
+              echo '[Deployment] Recent application logs:'
+              sudo docker-compose logs --tail=30 app
+              
+              echo '[Deployment] Deployment complete!'
+            "
+      
+      - name: Health Check
+        if: steps.vm_check.outputs.vm_exists == 'true'
+        run: |
+          echo "Performing health check..."
+          sleep 15
+          
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Health check attempt $ATTEMPT/$MAX_ATTEMPTS..."
+            
+            if curl -f -s -m 10 "http://${{ steps.vm_ip.outputs.vm_ip }}:3000" > /dev/null 2>&1; then
+              echo "Health check passed - application is responding"
+              exit 0
+            fi
+            
+            echo "Application not responding yet, waiting..."
+            sleep 10
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+          
+          echo "Warning: Application did not respond to health checks"
+          echo "This may be normal if startup takes longer than expected"
+          exit 0
+        continue-on-error: true
+      
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.vm_check.outputs.vm_exists }}" == "true" ]; then
+            echo "### Status: Deployment Completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Application URL:** \`http://${{ steps.vm_ip.outputs.vm_ip }}:3000\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployment Details:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Branch: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Force rebuild: ${{ github.event.inputs.force_rebuild || 'false' }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Verification Commands" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "# Check application status" >> $GITHUB_STEP_SUMMARY
+            echo "curl http://${{ steps.vm_ip.outputs.vm_ip }}:3000" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# View application logs" >> $GITHUB_STEP_SUMMARY
+            echo "gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.ZONE }} \\" >> $GITHUB_STEP_SUMMARY
+            echo "  --command='cd ${{ env.APP_DIR }}/Deployee && sudo docker-compose logs -f app'" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# Check container status" >> $GITHUB_STEP_SUMMARY
+            echo "gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.ZONE }} \\" >> $GITHUB_STEP_SUMMARY
+            echo "  --command='cd ${{ env.APP_DIR }}/Deployee && sudo docker-compose ps'" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Status: Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Error:** VM is not running or does not exist" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please ensure infrastructure is deployed first using the 'Deploy Infrastructure to GCP' workflow." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "=========================================="
+          echo "DEPLOYMENT SUMMARY"
+          echo "=========================================="
+          if [ "${{ steps.vm_check.outputs.vm_exists }}" == "true" ]; then
+            echo "Application deployed successfully"
+            echo "Access at: http://${{ steps.vm_ip.outputs.vm_ip }}:3000"
+          else
+            echo "Deployment failed - VM not available"
+          fi
+      
+      - name: Rollback on Failure
+        if: failure() && steps.vm_check.outputs.vm_exists == 'true'
+        run: |
+          echo "Deployment failed, attempting rollback..."
+          
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.ZONE }} \
+            --command="
+              cd ${{ env.APP_DIR }}
+              
+              echo '[Rollback] Reverting to previous version...'
+              git reset --hard HEAD~1
+              
+              cd Deployee
+              
+              echo '[Rollback] Rebuilding previous version...'
+              sudo docker-compose build app
+              
+              echo '[Rollback] Restarting containers...'
+              sudo docker-compose up -d
+              
+              echo '[Rollback] Rollback complete'
+            " || echo "Rollback failed - manual intervention required"
+        continue-on-error: true

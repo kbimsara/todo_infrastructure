@@ -4,11 +4,11 @@
 name: Deploy Application Updates
 
 on:
-  # push:
-  #   branches:
-  #     - main
-  #   paths:
-  #     - 'Todo App/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'Todo App/**'
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -249,7 +249,7 @@ EOF
                 git reset --hard HEAD~1
 EOF
               
-              cd Deployee
+              cd ${{ env.APP_DIR }}/Deployee
               
               echo '[Rollback] Rebuilding previous version...'
               sudo docker-compose build app

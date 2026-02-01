@@ -4,11 +4,11 @@
 name: Deploy Application Updates
 
 on:
-#   push:
-#     branches:
-#       - main
-#     paths:
-#       - 'Todo App/**'
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'Todo App/**'
   workflow_dispatch:
     inputs:
       force_rebuild:

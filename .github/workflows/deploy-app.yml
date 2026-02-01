@@ -80,14 +80,20 @@ jobs:
               
               echo '[Deployment] Starting application deployment...'
               
-              # Fix ownership of the directory FIRST
+              # Fix ownership of the entire directory including .git
               sudo chown -R ubuntu:ubuntu ${{ env.APP_DIR }}
+              
+              # Fix .git directory permissions specifically
+              sudo chmod -R u+rwX ${{ env.APP_DIR }}/.git
               
               # Fix Git ownership issue for ubuntu user
               git config --global --add safe.directory ${{ env.APP_DIR }}
               
               # Navigate to app directory
               cd ${{ env.APP_DIR }}
+              
+              # Clean up any stale git locks
+              sudo rm -f .git/index.lock .git/FETCH_HEAD.lock || true
               
               # Stash any local changes
               git stash || true
@@ -219,10 +225,16 @@ jobs:
               # Fix ownership FIRST
               sudo chown -R ubuntu:ubuntu ${{ env.APP_DIR }}
               
+              # Fix .git directory permissions
+              sudo chmod -R u+rwX ${{ env.APP_DIR }}/.git
+              
               # Fix Git ownership issue for ubuntu user
               git config --global --add safe.directory ${{ env.APP_DIR }}
               
               cd ${{ env.APP_DIR }}
+              
+              # Clean up any stale git locks
+              sudo rm -f .git/index.lock .git/FETCH_HEAD.lock || true
               
               echo '[Rollback] Reverting to previous version...'
               git reset --hard HEAD~1

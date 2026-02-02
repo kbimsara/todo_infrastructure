@@ -1,11 +1,12 @@
 # infrastructure.tf
 # Complete GCP Infrastructure with Direct VM Access
 # VM + Load Balancer + Docker Containers (Next.js + MongoDB)
+# FIXED: Proper permissions and git configuration
 
 variable "project_id" {
   description = "GCP Project ID"
   type        = string
-  default     = "my-app-todo-485623" # Replace with your actual project ID
+  default     = "my-app-todo-485623"
 }
 
 variable "region" {
@@ -124,7 +125,6 @@ resource "google_compute_firewall" "allow_ssh" {
   depends_on = [google_project_service.compute]
 }
 
-# NEW: Allow direct access to application port 3000
 resource "google_compute_firewall" "allow_app_port" {
   name    = "allow-app-port-3000"
   network = "default"
@@ -168,7 +168,7 @@ resource "google_compute_instance" "nextjs_vm" {
     #!/bin/bash
     set -e
     
-    # Log everything to /var/log/startup-script.log
+    # Log everything
     exec > >(tee -a /var/log/startup-script.log)
     exec 2>&1
     
@@ -195,30 +195,48 @@ resource "google_compute_instance" "nextjs_vm" {
     echo "[$(date)] Installing Docker Compose..."
     curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose || handle_error "Failed to download Docker Compose"
     chmod +x /usr/local/bin/docker-compose
-    
-    # Verify Docker Compose installation
     docker-compose --version || handle_error "Docker Compose installation failed"
     
     # Add ubuntu user to docker group
     echo "[$(date)] Configuring Docker permissions..."
     usermod -aG docker ubuntu
     
+    # CRITICAL FIX: Configure git for ubuntu user BEFORE cloning
+    echo "[$(date)] Configuring git globally..."
+    # Set git configs that will apply to all operations
+    git config --system --add safe.directory '*'
+    git config --system user.email "deployment@gcp.vm"
+    git config --system user.name "GCP Deployment"
+    
     # Set up repository directory
     REPO_DIR="/home/ubuntu/app"
     echo "[$(date)] Setting up repository at $REPO_DIR..."
     
-    # Clone or update repository (idempotent)
+    # Create directory structure with proper ownership from the start
+    mkdir -p "$REPO_DIR"
+    chown ubuntu:ubuntu "$REPO_DIR"
+    
+    # Clone as ubuntu user (not root!) to avoid permission issues
+    echo "[$(date)] Cloning repository as ubuntu user..."
     if [ -d "$REPO_DIR/.git" ]; then
       echo "[$(date)] Repository already exists. Updating..."
-      cd "$REPO_DIR"
-      git fetch origin || handle_error "Failed to fetch from remote"
-      git reset --hard origin/main || git reset --hard origin/master || handle_error "Failed to reset repository"
-      git pull || handle_error "Failed to pull latest changes"
+      # Run git operations as ubuntu user
+      su - ubuntu -c "cd '$REPO_DIR' && git fetch origin" || handle_error "Failed to fetch"
+      su - ubuntu -c "cd '$REPO_DIR' && git reset --hard origin/main" || handle_error "Failed to reset"
+      su - ubuntu -c "cd '$REPO_DIR' && git pull" || handle_error "Failed to pull"
     else
-      echo "[$(date)] Cloning repository from ${var.github_repo}..."
-      rm -rf "$REPO_DIR"
-      git clone "${var.github_repo}" "$REPO_DIR" || handle_error "Failed to clone repository"
+      echo "[$(date)] Cloning fresh repository..."
+      # Clone as ubuntu user
+      su - ubuntu -c "git clone '${var.github_repo}' '$REPO_DIR'" || handle_error "Failed to clone"
     fi
+    
+    # Ensure ownership is correct (belt and suspenders approach)
+    echo "[$(date)] Setting final permissions..."
+    chown -R ubuntu:ubuntu "$REPO_DIR"
+    chmod -R u+rw "$REPO_DIR"
+    
+    # Configure git in the repo directory
+    su - ubuntu -c "cd '$REPO_DIR' && git config --local --add safe.directory '$REPO_DIR'"
     
     # Verify repository structure
     echo "[$(date)] Verifying repository structure..."
@@ -228,15 +246,8 @@ resource "google_compute_instance" "nextjs_vm" {
     if [ ! -f "$REPO_DIR/Deployee/docker-compose.yml" ]; then
       handle_error "docker-compose.yml not found in Deployee directory"
     fi
-    if [ ! -d "$REPO_DIR/Todo App" ]; then
-      handle_error "Todo App directory not found in repository"
-    fi
     
     echo "[$(date)] Repository structure verified successfully"
-    
-    # Set proper ownership
-    echo "[$(date)] Setting file permissions..."
-    chown -R ubuntu:ubuntu "$REPO_DIR"
     
     # Navigate to deployment directory
     cd "$REPO_DIR/Deployee" || handle_error "Failed to navigate to Deployee directory"
@@ -248,11 +259,11 @@ resource "google_compute_instance" "nextjs_vm" {
     
     # Pull images
     echo "[$(date)] Pulling Docker images..."
-    docker-compose pull mongodb || handle_error "Failed to pull MongoDB image"
+    docker-compose pull || echo "Warning: Some images may need to be built"
     
     # Build application
     echo "[$(date)] Building application Docker image..."
-    docker-compose build --no-cache app || handle_error "Failed to build application image"
+    docker-compose build --no-cache || handle_error "Failed to build application"
     
     # Stop any existing containers
     echo "[$(date)] Stopping any existing containers..."
@@ -263,222 +274,7 @@ resource "google_compute_instance" "nextjs_vm" {
     docker-compose up -d || handle_error "Failed to start containers"
     
     # Wait for containers to be healthy
-    echo "[$(date)] Waiting for containers to be healthy..."
-    MAX_WAIT=180  # 3 minutes
-    ELAPSED=0
-    INTERVAL=5
-    
-    while [ $ELAPSED -lt $MAX_WAIT ]; do
-      MONGODB_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' todo-mongodb 2>/dev/null || echo "starting")
-      APP_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' todo-app 2>/dev/null || echo "starting")
-      
-      echo "[$(date)] Health status - MongoDB: $MONGODB_HEALTH, App: $APP_HEALTH"
-      
-      if [ "$MONGODB_HEALTH" = "healthy" ] && [ "$APP_HEALTH" = "healthy" ]; then
-        echo "[$(date)] ✓ All containers are healthy!"
-        break
-      fi
-      
-      sleep $INTERVAL
-      ELAPSED=$((ELAPSED + INTERVAL))
-    done
-    
-    if [ $ELAPSED -ge $MAX_WAIT ]; then
-      echo "[$(date)] WARNING: Containers did not become healthy within timeout"
-      echo "[$(date)] Container status:"
-      docker-compose ps
-      echo "[$(date)] Container logs:"
-      docker-compose logs --tail=50
-    fi
-    
-    # Show container status
-    echo "[$(date)] Final container status:"
-    docker-compose ps
-    
-    # Test local access to health endpoint
-    echo "[$(date)] Testing application health endpoint..."
-    sleep 10  # Give app a bit more time
-    if curl -f -s http://localhost:3000/api/health > /dev/null 2>&1; then
-      echo "[$(date)] ✓ Health endpoint responding successfully"
-    else
-      echo "[$(date)] WARNING: Health endpoint not responding yet"
-      echo "[$(date)] Attempting root endpoint..."
-      curl -s http://localhost:3000 > /dev/null && echo "[$(date)] ✓ App responding on root endpoint" || echo "[$(date)] ✗ App not responding"
-    fi
-    
-    # Get external IP
-    EXTERNAL_IP=$(curl -s http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip -H 'Metadata-Flavor: Google')
-    
-    echo "[$(date)] ========================================"
-    echo "[$(date)] Deployment completed!"
-    echo "[$(date)] ========================================"
-    echo "[$(date)] Direct access URL: http://$EXTERNAL_IP:3000"
-    echo "[$(date)] Health check URL: http://$EXTERNAL_IP:3000/api/health"
-    echo "[$(date)] Logs available at: /var/log/startup-script.log"
-    echo "[$(date)] ========================================"
-    mkdir -p html
-    cat > html/index.html <<'HTML_EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Todo App - Running!</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 16px;
-            padding: 60px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            text-align: center;
-            max-width: 700px;
-        }
-        h1 {
-            font-size: 3rem;
-            color: #333;
-            margin-bottom: 20px;
-        }
-        .status {
-            display: inline-block;
-            background: #34a853;
-            color: white;
-            padding: 12px 30px;
-            border-radius: 50px;
-            font-weight: 600;
-            margin: 20px 0;
-            font-size: 1.2rem;
-        }
-        .badge {
-            display: inline-block;
-            background: #4285f4;
-            color: white;
-            padding: 8px 20px;
-            border-radius: 50px;
-            font-size: 0.9rem;
-            margin: 5px;
-        }
-        .info {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 30px;
-            text-align: left;
-        }
-        .info p {
-            margin: 10px 0;
-            color: #666;
-        }
-        .info strong {
-            color: #333;
-        }
-        .emoji { font-size: 4rem; margin: 20px 0; }
-        .access-box {
-            margin-top: 30px;
-            padding: 20px;
-            background: #e8f5e9;
-            border-radius: 8px;
-            border-left: 4px solid #34a853;
-        }
-        .access-box h3 {
-            color: #2d9048;
-            margin-bottom: 15px;
-        }
-        .access-box ul {
-            list-style: none;
-            padding: 0;
-            text-align: left;
-        }
-        .access-box li {
-            padding: 8px 0;
-            color: #666;
-        }
-        .access-box li:before {
-            content: "✓ ";
-            color: #34a853;
-            font-weight: bold;
-            margin-right: 8px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="emoji">🎉</div>
-        <h1>Todo App Deployed!</h1>
-        <div class="status">✓ Infrastructure Running</div>
-        
-        <div style="margin: 20px 0;">
-            <span class="badge">Docker ✓</span>
-            <span class="badge">MongoDB ✓</span>
-            <span class="badge">Nginx ✓</span>
-            <span class="badge">Firewall ✓</span>
-        </div>
-        
-        <div class="access-box">
-            <h3>✅ Direct Access Enabled!</h3>
-            <ul>
-                <li>You can access this page directly via VM IP</li>
-                <li>Load Balancer access also available (wait 10 min)</li>
-                <li>SSH access enabled for debugging</li>
-                <li>Port 3000 open to the internet</li>
-            </ul>
-        </div>
-        
-        <div class="info">
-            <p><strong>Infrastructure Status:</strong></p>
-            <p>✓ VM Instance: Running</p>
-            <p>✓ MongoDB: Connected and healthy</p>
-            <p>✓ Web Server: Responding on port 3000</p>
-            <p>✓ Firewall: Direct access configured</p>
-            <p>⏳ Load Balancer: Provisioning (5-10 min)</p>
-        </div>
-        
-        <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px;">
-            <h3 style="color: #856404; margin-bottom: 10px;">🚀 Next Steps</h3>
-            <ol style="color: #856404; text-align: left; padding-left: 20px;">
-                <li>Build your Next.js Docker image</li>
-                <li>Push to GitHub Container Registry</li>
-                <li>Update docker-compose.yml with your image</li>
-                <li>Redeploy using GitHub Actions</li>
-            </ol>
-        </div>
-    </div>
-    
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('✅ Todo App Infrastructure Deployed!');
-            console.log('📍 Current URL:', window.location.href);
-        });
-    </script>
-</body>
-</html>
-HTML_EOF
-    
-    # Create health check endpoint
-    cat > html/health <<'HEALTH_EOF'
-OK
-HEALTH_EOF
-    
-    # Set ownership
-    chown -R ubuntu:ubuntu /home/ubuntu/app
-    
-    # Pull images
-    echo "[$(date)] Pulling Docker images..."
-    docker-compose pull
-    
-    # Start containers
-    echo "[$(date)] Starting containers..."
-    docker-compose up -d
-    
-    # Wait for containers to be healthy
-    echo "[$(date)] Waiting for containers to be healthy..."
+    echo "[$(date)] Waiting for containers to stabilize..."
     sleep 30
     
     # Show container status
@@ -486,14 +282,39 @@ HEALTH_EOF
     docker-compose ps
     
     # Test local access
-    echo "[$(date)] Testing local access..."
-    curl -s http://localhost:3000 > /dev/null && echo "✓ App responding on port 3000" || echo "✗ App not responding"
-    
-    echo "[$(date)] Deployment completed!"
+    echo "[$(date)] Testing application..."
+    if curl -f -s http://localhost:3000 > /dev/null 2>&1; then
+      echo "[$(date)] ✓ Application is responding"
+    else
+      echo "[$(date)] WARNING: Application not responding yet (may need more time)"
+      echo "[$(date)] Container logs:"
+      docker-compose logs --tail=50
+    fi
     
     # Get external IP
     EXTERNAL_IP=$(curl -s http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip -H 'Metadata-Flavor: Google')
+    
+    # Create deployment info file readable by ubuntu user
+    cat > /home/ubuntu/deployment-info.txt <<DEPLOY_INFO
+======================================
+DEPLOYMENT COMPLETED
+======================================
+Date: $(date)
+Repository: ${var.github_repo}
+Commit: $(git log -1 --oneline)
+Direct URL: http://$EXTERNAL_IP:3000
+======================================
+DEPLOY_INFO
+    
+    chown ubuntu:ubuntu /home/ubuntu/deployment-info.txt
+    
+    echo "[$(date)] ========================================"
+    echo "[$(date)] Deployment completed!"
+    echo "[$(date)] ========================================"
     echo "[$(date)] Direct access URL: http://$EXTERNAL_IP:3000"
+    echo "[$(date)] Logs: /var/log/startup-script.log"
+    echo "[$(date)] Info: /home/ubuntu/deployment-info.txt"
+    echo "[$(date)] ========================================"
   EOF
 
   service_account {
@@ -634,12 +455,12 @@ output "check_startup_logs" {
 
 output "check_containers" {
   description = "Check container status"
-  value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cd /home/ubuntu/app && sudo docker-compose ps'"
+  value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cd /home/ubuntu/app/Deployee && sudo docker-compose ps'"
 }
 
-output "check_backend_health" {
-  description = "Check load balancer backend health"
-  value       = "gcloud compute backend-services get-health todo-app-backend --global"
+output "deployment_info" {
+  description = "View deployment information"
+  value       = "gcloud compute ssh ${google_compute_instance.nextjs_vm.name} --zone=${var.zone} --project=${var.project_id} --command='cat /home/ubuntu/deployment-info.txt'"
 }
 
 output "access_summary" {

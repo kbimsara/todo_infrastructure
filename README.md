@@ -157,6 +157,190 @@ The startup script automatically:
 5. Builds and starts Docker containers
 6. Configures MongoDB and Next.js app
 
+### Application Updates & Redeployment
+
+Once your infrastructure is deployed, you can update the application code without recreating the entire infrastructure.
+
+#### Method 1: Automatic Updates via GitHub Actions
+
+When you push code changes to the `main` branch, the VM automatically pulls and deploys the latest code:
+
+```bash
+# Make your application changes
+cd "Todo App"
+# Edit components, add features, fix bugs...
+
+# Commit and push to GitHub
+git add .
+git commit -m "Add new todo feature"
+git push origin main
+
+# Trigger GitHub Actions workflow (manual)
+# OR it runs automatically if set up
+```
+
+**What Happens:**
+1. GitHub Actions workflow triggers
+2. Terraform imports existing infrastructure (no recreation)
+3. VM detects code changes in startup script
+4. Latest code is pulled from GitHub
+5. Docker images rebuild with `--no-cache`
+6. Containers restart with new code
+7. Application serves updated version
+
+**Timeline:**
+- 0-2 min: Workflow starts and imports state
+- 2-4 min: Terraform applies (VM preserved)
+- 4-7 min: VM pulls code and rebuilds containers
+- 7-10 min: Application healthy with new code
+
+#### Method 2: Manual Update via SSH
+
+For quick updates without triggering GitHub Actions:
+
+```bash
+# SSH into the VM
+gcloud compute ssh todo-app-vm \
+  --zone=us-central1-a \
+  --project=your-project-id
+
+# Once inside the VM:
+cd /home/ubuntu/app
+
+# Pull latest code from GitHub
+git pull origin main
+
+# Rebuild and restart containers
+cd Deployee
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# Verify containers are running
+docker-compose ps
+
+# Check application logs
+docker-compose logs -f app
+```
+
+**Update Timeline:**
+- ~1 min: Pull code from GitHub
+- ~2-3 min: Rebuild Docker images
+- ~30 sec: Restart containers
+- **Total: ~4-5 minutes**
+
+#### Method 3: Local Build & Push (Advanced)
+
+Build locally and push images to a registry:
+
+```bash
+# Build image locally
+cd "Todo App"
+docker build -t gcr.io/your-project-id/todo-app:latest .
+
+# Push to Google Container Registry
+docker push gcr.io/your-project-id/todo-app:latest
+
+# Update docker-compose.yml to use the image
+# Then SSH and pull the new image
+gcloud compute ssh todo-app-vm --zone=us-central1-a
+
+# On VM:
+cd /home/ubuntu/app/Deployee
+docker-compose pull
+docker-compose up -d
+```
+
+#### What Gets Preserved During Updates
+- ✅ **MongoDB Data**: All todos and data persist in Docker volumes
+- ✅ **VM IP Address**: No IP changes (direct URL stays same)
+- ✅ **Load Balancer**: External IP remains constant
+- ✅ **Configurations**: Firewall rules and network settings intact
+- ✅ **SSL Certificates**: If configured, remain valid
+
+#### What Gets Updated
+- 🔄 **Application Code**: React components, API routes, styling
+- 🔄 **Docker Images**: Rebuilt from latest code
+- 🔄 **Dependencies**: `package.json` changes applied
+- 🔄 **Environment Variables**: If modified in docker-compose.yml
+
+#### Verify Application Update
+
+```bash
+# Check current git commit on VM
+gcloud compute ssh todo-app-vm \
+  --zone=us-central1-a \
+  --command='cd /home/ubuntu/app && git log -1 --oneline'
+
+# Check when containers were last recreated
+gcloud compute ssh todo-app-vm \
+  --zone=us-central1-a \
+  --command='docker ps --format "table {{.Names}}\t{{.Status}}"'
+
+# Test the application
+curl http://YOUR_VM_IP:3000/api/health
+```
+
+#### Rollback to Previous Version
+
+If an update causes issues:
+
+```bash
+# SSH into VM
+gcloud compute ssh todo-app-vm --zone=us-central1-a
+
+# On VM - rollback to previous commit
+cd /home/ubuntu/app
+git log --oneline  # Find previous commit hash
+git reset --hard COMMIT_HASH
+
+# Rebuild and restart
+cd Deployee
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+#### Zero-Downtime Updates (Production)
+
+For production, implement blue-green deployment:
+
+1. Create a second VM with new code
+2. Test thoroughly
+3. Switch load balancer to new VM
+4. Keep old VM as backup
+5. Destroy old VM after verification
+
+#### Common Update Scenarios
+
+**Frontend Changes Only:**
+```bash
+# Edit React components in Todo App/components/
+# Push to GitHub → Auto-deploy or manual SSH update
+# ~4-5 min total update time
+```
+
+**API Changes:**
+```bash
+# Edit routes in Todo App/app/api/
+# Update may require schema changes
+# Test thoroughly before deploying
+```
+
+**Database Schema Changes:**
+```bash
+# Update models in Todo App/models/
+# May require data migration script
+# Consider backup before updating
+```
+
+**Dependency Updates:**
+```bash
+# Update package.json
+# Rebuild ensures all deps are fresh
+# Test locally first with docker-compose
+```
+
 ## Monitoring & Debugging
 
 ### Check Startup Logs
@@ -213,14 +397,21 @@ gcloud compute ssh todo-app-vm \
 
 ## Features
 
-- Create, Read, Update, Delete todos
-- Filter todos (All / Active / Completed)
-- Real-time statistics
-- Responsive UI design
-- Health check endpoints
-- Production-ready Docker setup
-- Automated GCP deployment
-- Load balancing and auto-healing
+### Application Features
+- ✅ Create, Read, Update, Delete todos
+- ✅ Filter todos (All / Active / Completed)
+- ✅ Real-time statistics
+- ✅ Responsive UI design
+- ✅ Health check endpoints
+
+### DevOps Features
+- ✅ Production-ready Docker setup
+- ✅ Automated GCP deployment via GitHub Actions
+- ✅ Zero-downtime redeployment on git push
+- ✅ Smart infrastructure state management
+- ✅ Load balancing and auto-healing
+- ✅ Automated health monitoring
+- ✅ Infrastructure as Code (Terraform)
 
 ## Cleanup
 

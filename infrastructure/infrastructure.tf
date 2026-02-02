@@ -339,8 +339,8 @@ DEPLOY_INFO
 
 resource "google_compute_health_check" "nextjs_health_check" {
   name               = "todo-app-health-check"
-  check_interval_sec = 10
-  timeout_sec        = 5
+  check_interval_sec = 30
+  timeout_sec        = 10
   healthy_threshold  = 2
   unhealthy_threshold = 3
 

@@ -27,6 +27,7 @@ todo_infrastructure/
 ├── .github/
 │   └── workflows/
 │       ├── terraform-deploy.yml      # Deploy infrastructure
+│       ├── deploy-app.yml      # Deploy app update
 │       └── terraform-destroy.yml     # Destroy infrastructure
 ├── Deployee/
 │   └── docker-compose.yml            # Production Docker setup
